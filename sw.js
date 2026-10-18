@@ -1,7 +1,8 @@
 // UMUKOZI service worker: installable app that opens fast and still shows the last screen offline.
 // Only same-origin app files are cached. Supabase, Cloudinary and fonts always go straight to the network.
-const VERSION = 'umukozi-v3';
-const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png'];
+const VERSION = 'umukozi-v4';
+const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png',
+  '/favicon-32.png', '/assets/logo.png', '/assets/ish-logo.png', '/assets/landing.jpg', '/assets/landing-tab.jpg', '/assets/landing-sq.jpg', '/assets/land.jpg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
