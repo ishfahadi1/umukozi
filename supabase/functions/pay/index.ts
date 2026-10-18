@@ -12,6 +12,7 @@ const PESAPAL_KEY = Deno.env.get('PESAPAL_CONSUMER_KEY') || '';
 const PESAPAL_SECRET = Deno.env.get('PESAPAL_CONSUMER_SECRET') || '';
 const PESAPAL_BASE = Deno.env.get('PESAPAL_ENV') === 'live' ? 'https://pay.pesapal.com/v3/api' : 'https://cybqa.pesapal.com/pesapalv3/api';
 const PESAPAL_ON = !!(PESAPAL_KEY && PESAPAL_SECRET);
+const PESAPAL_ENV_NAME = Deno.env.get('PESAPAL_ENV') === 'live' ? 'live' : 'sandbox';
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -59,8 +60,9 @@ async function pesapalToken(): Promise<string | null> {
 
 // Pesapal sends payment updates to our IPN URL. The id is registered once and kept in settings.
 async function pesapalIpnId(token: string): Promise<string | null> {
-  const { data: st } = await admin.from('settings').select('pesapal_ipn_id').eq('id', true).maybeSingle();
-  if (st?.pesapal_ipn_id) return st.pesapal_ipn_id;
+  // The id is kept per environment, so switching PESAPAL_ENV from sandbox to live registers a new one by itself.
+  const { data: st } = await admin.from('settings').select('pesapal_ipn_id, pesapal_ipn_env').eq('id', true).maybeSingle();
+  if (st?.pesapal_ipn_id && st?.pesapal_ipn_env === PESAPAL_ENV_NAME) return st.pesapal_ipn_id;
   const r = await fetch(PESAPAL_BASE + '/URLSetup/RegisterIPN', {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
@@ -68,7 +70,7 @@ async function pesapalIpnId(token: string): Promise<string | null> {
   });
   const d = await r.json().catch(() => null);
   if (!d || !d.ipn_id) return null;
-  await admin.from('settings').update({ pesapal_ipn_id: d.ipn_id }).eq('id', true);
+  await admin.from('settings').update({ pesapal_ipn_id: d.ipn_id, pesapal_ipn_env: PESAPAL_ENV_NAME }).eq('id', true);
   return d.ipn_id;
 }
 
