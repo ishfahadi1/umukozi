@@ -191,7 +191,8 @@ Deno.serve(async (req) => {
           callback_url: APP_URL + '/',
           notification_id: ipnId,
           billing_address: {
-            email_address: u.user.email, phone_number: '+250' + digits, country_code: 'RW',
+            ...(prof.contact_email ? { email_address: prof.contact_email } : {}),
+            phone_number: '0' + digits, country_code: 'RW',
             first_name: parts[0] || 'Umukozi', last_name: parts.slice(1).join(' ') || 'User',
           },
         }),

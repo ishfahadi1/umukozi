@@ -48,6 +48,8 @@ Deno.serve(async (req) => {
     if (!['worker', 'employer'].includes(p.role)) return json({ error: 'bad_role' }, 400);
     const name = String(p.name || '').trim();
     if (name.length < 2 || name.length > 80) return json({ error: 'bad_name' }, 400);
+    const contactEmail = String(p.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail) || contactEmail.length > 120) return json({ error: 'bad_email' }, 400);
     const province = PROV[p.district];
     if (!province) return json({ error: 'bad_district' }, 400);
     const { data: cat } = await admin.from('categories').select('name').eq('name', p.category).maybeSingle();
@@ -80,6 +82,7 @@ Deno.serve(async (req) => {
       description: worker ? null : String(p.description || '').slice(0, 500),
       photo_url: photo,
       referred_by: referredBy,
+      contact_email: contactEmail,
     };
     const { data: prof, error: pe } = await admin.from('profiles').insert(row).select().single();
     if (pe) {
