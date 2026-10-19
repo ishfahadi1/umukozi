@@ -11,7 +11,7 @@ const admin = createClient(URL_, SERVICE, { auth: { persistSession: false, autoR
 
 // Pesapal expects this JSON back. A non-200 answer makes Pesapal retry later.
 const ack = (trackingId: string, ref: string, notif: string, status = 200) =>
-  new Response(JSON.stringify({ orderNotificationType: notif, orderTrackingId: trackingId, orderMerchantReference: ref, status: String(status) }), {
+  new Response(JSON.stringify({ orderNotificationType: notif, orderTrackingId: trackingId, orderMerchantReference: ref, status: Number(status) }), {
     status, headers: { 'Content-Type': 'application/json' },
   });
 
@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
   const desc = String(t.payment_status_description || '').toLowerCase();
   if (desc === 'completed' && t.currency === 'RWF' && Number(t.amount) >= Number(p.amount)) {
     const { error } = await admin.from('payments')
-      .update({ status: 'PAID', confirmed_at: new Date().toISOString(), provider_ref: trackingId })
+      .update({ status: 'PAID', confirmed_at: new Date().toISOString(), provider_ref: trackingId, payment_method: t.payment_method ? String(t.payment_method) : null })
       .eq('id', p.id).neq('status', 'PAID');
     if (error) return ack(trackingId, ref, notif, 500);
   } else if (desc === 'failed' || desc === 'invalid' || desc === 'reversed') {

@@ -85,7 +85,7 @@ async function pesapalSettle(paymentId: string, trackingId: string, expected: nu
   const desc = String(t.payment_status_description || '').toLowerCase();
   if (desc === 'completed' && t.currency === 'RWF' && Number(t.amount) >= expected) {
     const { error } = await admin.from('payments')
-      .update({ status: 'PAID', confirmed_at: new Date().toISOString(), provider_ref: trackingId })
+      .update({ status: 'PAID', confirmed_at: new Date().toISOString(), provider_ref: trackingId, payment_method: t.payment_method ? String(t.payment_method) : null })
       .eq('id', paymentId).neq('status', 'PAID');
     if (error) throw error;
     return 'PAID';
@@ -188,7 +188,7 @@ Deno.serve(async (req) => {
           currency: 'RWF',
           amount,
           description: purpose === 'boost' ? 'UMUKOZI boost' : 'UMUKOZI kwemeza konti',
-          callback_url: APP_URL + '/?pay=' + pay.id,
+          callback_url: APP_URL + '/',
           notification_id: ipnId,
           billing_address: {
             email_address: u.user.email, phone_number: '+250' + digits, country_code: 'RW',
