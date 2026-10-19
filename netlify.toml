@@ -39,3 +39,10 @@
   for = "/icon-*"
   [headers.values]
     Cache-Control = "public, max-age=2592000"
+
+# The admin page is never indexed by search engines and is not cached.
+[[headers]]
+  for = "/admin.html"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow, noarchive, nosnippet, noimageindex"
+    Cache-Control = "no-store"
