@@ -60,6 +60,14 @@ async function totpAt(secretB32: string, counter: number): Promise<string> {
   return String(code % 1_000_000).padStart(6, '0');
 }
 
+async function matchStep(secretB32: string, code: string): Promise<number> {
+  const counter = Math.floor(Date.now() / 1000 / 30);
+  for (let w = -WINDOW; w <= WINDOW; w++) {
+    if ((await totpAt(secretB32, counter + w)) === code) return counter + w;
+  }
+  return -1;
+}
+
 async function totpMatches(secretB32: string, code: string): Promise<boolean> {
   const counter = Math.floor(Date.now() / 1000 / 30);
   let ok = false;
@@ -160,10 +168,13 @@ Deno.serve(async (req) => {
     if (error) return json({ error: 'lookup_failed' }, 500);
     const row = rows && rows[0];
     if (!row || !row.totp_secret) return json({ error: 'invalid' }, 401);
-    if (!(await totpMatches(row.totp_secret, code))) return json({ error: 'invalid' }, 401);
+    const step = await matchStep(row.totp_secret, code);
+    if (step < 0) return json({ error: 'invalid' }, 401);
     const hash = await pbkdf2Hash(pin);
-    const { error: ue } = await admin.from('admins').update({ password_hash: hash, failed_attempts: 0, locked_until: null }).eq('id', row.id);
-    if (ue) return json({ error: 'save_failed' }, 500);
+    const { data: claimed, error: ue } = await admin.from('admins')
+      .update({ password_hash: hash, failed_attempts: 0, locked_until: null, last_step: step })
+      .eq('id', row.id).lt('last_step', step).select('id');
+    if (ue || !claimed || !claimed.length) return json({ error: 'save_failed' }, 500);
     await admin.from('admin_bootstrap').delete().eq('id', 1);
     return await sessionFor(row.id);
   }
@@ -174,21 +185,26 @@ Deno.serve(async (req) => {
     if (!/^\d{4}$/.test(pin) || !/^\d{6}$/.test(code)) return json({ error: 'bad_input' }, 400);
     const { data: rows, error } = await admin
       .from('admins')
-      .select('id, totp_secret, password_hash, failed_attempts, locked_until')
+      .select('id, totp_secret, password_hash, failed_attempts, locked_until, last_step')
       .limit(1);
     if (error) return json({ error: 'lookup_failed' }, 500);
     const row = rows && rows[0];
     if (!row || !row.totp_secret || !row.password_hash) return json({ error: 'invalid' }, 401);
     if (row.locked_until && new Date(row.locked_until).getTime() > Date.now()) return json({ error: 'locked' }, 429);
     const pinOk = await hashMatches(row.password_hash, pin);
-    const codeOk = await totpMatches(row.totp_secret, code);
+    const step = await matchStep(row.totp_secret, code);
+    const codeOk = step >= 0 && step > Number(row.last_step ?? -1);
     if (!(pinOk && codeOk)) {
       const failed = (row.failed_attempts || 0) + 1;
       const lockUntil = failed >= LOCK_AFTER ? new Date(Date.now() + LOCK_MINUTES * 60000).toISOString() : null;
       await admin.from('admins').update({ failed_attempts: lockUntil ? 0 : failed, locked_until: lockUntil }).eq('id', row.id);
       return json({ error: 'invalid' }, 401);
     }
-    await admin.from('admins').update({ failed_attempts: 0, locked_until: null }).eq('id', row.id);
+    // Claim the step: a code can be used once, even if two requests race with the same code.
+    const { data: claimed, error: ce } = await admin.from('admins')
+      .update({ failed_attempts: 0, locked_until: null, last_step: step })
+      .eq('id', row.id).lt('last_step', step).select('id');
+    if (ce || !claimed || !claimed.length) return json({ error: 'invalid' }, 401);
     return await sessionFor(row.id);
   }
 
