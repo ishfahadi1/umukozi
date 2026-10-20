@@ -143,7 +143,7 @@ Deno.serve(async (req) => {
 
   if (b.action === 'setup_begin') {
     if ((await status()).setup) return json({ error: 'closed' }, 403);
-    if (!(await setupCodeOk(String(b.setup_code || '')))) return json({ error: 'invalid' }, 401);
+    if (!(await setupCodeOk(String(b.setup_code || '')))) return json({ error: 'setup_code' }, 401);
     const owner = await ownerUserId();
     if (!owner) return json({ error: 'account_error' }, 500);
     // While setup is unfinished, keep the same secret, so the QR code stays the same on every retry.
@@ -160,7 +160,7 @@ Deno.serve(async (req) => {
 
   if (b.action === 'setup_confirm') {
     if ((await status()).setup) return json({ error: 'closed' }, 403);
-    if (!(await setupCodeOk(String(b.setup_code || '')))) return json({ error: 'invalid' }, 401);
+    if (!(await setupCodeOk(String(b.setup_code || '')))) return json({ error: 'setup_code' }, 401);
     const pin = String(b.password || '');
     const code = String(b.code || '').replace(/\D/g, '');
     if (!/^\d{4}$/.test(pin) || !/^\d{6}$/.test(code)) return json({ error: 'bad_input' }, 400);
@@ -169,7 +169,7 @@ Deno.serve(async (req) => {
     const row = rows && rows[0];
     if (!row || !row.totp_secret) return json({ error: 'invalid' }, 401);
     const step = await matchStep(row.totp_secret, code);
-    if (step < 0) return json({ error: 'invalid' }, 401);
+    if (step < 0) { console.log('setup_confirm: authenticator code did not match', new Date().toISOString()); return json({ error: 'code' }, 401); }
     const hash = await pbkdf2Hash(pin);
     const { data: claimed, error: ue } = await admin.from('admins')
       .update({ password_hash: hash, failed_attempts: 0, locked_until: null, last_step: step })
@@ -198,7 +198,9 @@ Deno.serve(async (req) => {
       const failed = (row.failed_attempts || 0) + 1;
       const lockUntil = failed >= LOCK_AFTER ? new Date(Date.now() + LOCK_MINUTES * 60000).toISOString() : null;
       await admin.from('admins').update({ failed_attempts: lockUntil ? 0 : failed, locked_until: lockUntil }).eq('id', row.id);
-      return json({ error: 'invalid' }, 401);
+      const reason = !pinOk ? 'pin' : step < 0 ? 'code' : 'code_used';
+      console.log('login refused:', reason, '| failed count now', failed, '| locking', !!lockUntil, '|', new Date().toISOString());
+      return json({ error: reason }, 401);
     }
     // Claim the step: a code can be used once, even if two requests race with the same code.
     const { data: claimed, error: ce } = await admin.from('admins')
