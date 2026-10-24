@@ -45,3 +45,17 @@ Status: the code is deployed but switched off. It stays off until XentriPAY give
 2. Set `XENTRIPAY_MOMO=on`. The MoMo button then appears on the payment screen. Only do this in test first.
 3. Make one test collection and read the status response. Adjust the mapping if its shape differs from what the code expects.
 4. Switch to `live` only after XentriPAY confirms the merchant is approved.
+
+
+## Corrections after reading the official documents (v2.0 API, Webhooks Guide v1.0)
+- `success` is a number (1 or 0). The first version checked `=== true`, so every accepted request would have been wrongly refused. Fixed.
+- The status endpoint returns no amount. The first version required one, so payments could never be confirmed. Fixed: SUCCESS from the authenticated status endpoint is enough, and a reported amount, if any, must cover what we asked.
+- `customerRef` is now sent on every collection (our payment id). It is also used for status checks.
+- `chargesIncluded: true` is now sent, so the customer pays exactly the price shown in the app and the fee comes out of it. Confirm this with XentriPAY before launch; the alternative is to add the fee on top.
+- Webhook signatures ARE documented: `X-Xentripay-Signature: sha256=<hex>`, HMAC-SHA256 over the raw body. The secret is returned when the webhook is registered via `POST /api/webhooks/set`. When `XENTRIPAY_WEBHOOK_SECRET` is set, every webhook must carry a valid signature.
+- XentriPAY's `refid` is stored in `provider_refid`. Our `customerRef` is stored in `provider_ref`. Webhooks are matched against either one.
+
+## Open questions for XentriPAY
+1. Does the webhook `data.reference` equal the `refid` from initiate, or some other value? Matching works for both, but this should be confirmed in test.
+2. Is `chargesIncluded: true` the right default for us?
+3. Which webhook events does the dashboard send for a MoMo collection that the customer cancels?

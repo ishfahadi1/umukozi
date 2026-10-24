@@ -1,5 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { decide, cnumber, msisdn, validNineDigits, boostAmount } from './logic.mjs';
+import { decide, cnumber, msisdn, validNineDigits, boostAmount, isAccepted } from './logic.mjs';
 
 // XentriPAY mobile-money collections (MTN MoMo, Airtel Money). Used only when XENTRIPAY_API_KEY is set
 // AND XENTRIPAY_MOMO is "on" (switch on only after XentriPAY confirms the methods for our merchant account).
@@ -28,20 +28,21 @@ async function xp(path: string, init: RequestInit = {}): Promise<{ http: number;
   return { http: r.status, body };
 }
 
-// Ask XentriPAY for the real status of one collection. Returns the decision for our payment.
-async function verdictFor(providerRef: string, expected: number): Promise<'PAID' | 'REJECTED' | 'PENDING'> {
-  const { http, body } = await xp('/api/collections/status/' + encodeURIComponent(providerRef), { method: 'GET' });
+// Ask XentriPAY for the status of one collection, using our customerRef (the docs accept it).
+async function verdictFor(customerRef: string, expected: number): Promise<'PAID' | 'REJECTED' | 'PENDING'> {
+  const { http, body } = await xp('/api/collections/status/' + encodeURIComponent(customerRef), { method: 'GET' });
   if (http >= 300 || !body) return 'PENDING';
-  const raw = body.status ?? body.data?.status;
-  const amt = body.amount ?? body.data?.amount;
-  const cur = body.currency ?? body.data?.currency;
-  return decide(raw, amt, expected, cur);
+  return decide(
+    body.status ?? body.data?.status,
+    body.amount ?? body.data?.amount ?? null,
+    expected,
+    body.currency ?? body.data?.currency ?? null,
+  );
 }
 
-async function applyVerdict(paymentId: string, providerRef: string, verdict: 'PAID' | 'REJECTED' | 'PENDING') {
+async function applyVerdict(paymentId: string, verdict: 'PAID' | 'REJECTED' | 'PENDING') {
   if (verdict === 'PAID') {
-    await admin.from('payments')
-      .update({ status: 'PAID', confirmed_at: new Date().toISOString(), provider_ref: providerRef })
+    await admin.from('payments').update({ status: 'PAID', confirmed_at: new Date().toISOString() })
       .eq('id', paymentId).neq('status', 'PAID');
   } else if (verdict === 'REJECTED') {
     await admin.from('payments').update({ status: 'REJECTED' }).eq('id', paymentId).eq('status', 'PENDING');
@@ -71,7 +72,7 @@ Deno.serve(async (req) => {
     if (p.status === 'REJECTED') return json({ status: 'FAILED', payment_id: p.id });
     if (!XP_KEY || !p.provider_ref) return json({ status: 'PENDING', payment_id: p.id });
     const v = await verdictFor(String(p.provider_ref), Number(p.amount));
-    await applyVerdict(p.id, String(p.provider_ref), v);
+    await applyVerdict(p.id, v);
     return json({ status: v === 'PAID' ? 'PAID' : v === 'REJECTED' ? 'FAILED' : 'PENDING', payment_id: p.id });
   }
 
@@ -110,7 +111,7 @@ Deno.serve(async (req) => {
     }
     if (!Number.isInteger(amount) || amount < 100) return json({ error: 'bad_amount' }, 400);
 
-    // Persist the attempt before we call the provider.
+    // Our reference (customerRef) is saved before we call the provider, so every attempt is traceable.
     const payId = crypto.randomUUID();
     const { error: pe } = await admin.from('payments').insert({
       id: payId, profile_id: uid, provider: 'xentripay', phone: '0' + digits, amount, purpose,
@@ -128,14 +129,17 @@ Deno.serve(async (req) => {
         msisdn: msisdn(digits),
         currency: 'RWF',
         pmethod: 'momo',
+        customerRef: payId,
+        // The fee comes out of the amount, so the customer pays exactly the price shown in the app.
+        chargesIncluded: true,
+        details: purpose === 'boost' ? 'UMUKOZI boost' : 'UMUKOZI kwemeza konti',
       }),
     });
-    const accepted = http < 300 && body && body.success === true && body.refid;
-    if (!accepted) {
+    if (!isAccepted(body, http)) {
       await admin.from('payments').update({ status: 'REJECTED' }).eq('id', payId);
-      return json({ status: 'FAILED', payment_id: payId, error: 'provider_rejected', retcode: body?.retcode ?? null }, 200);
+      return json({ status: 'FAILED', payment_id: payId, error: 'provider_rejected', retcode: body?.retcode ?? null, reply: body?.reply ?? null }, 200);
     }
-    await admin.from('payments').update({ provider_ref: String(body.refid) }).eq('id', payId);
+    await admin.from('payments').update({ provider_refid: String(body.refid) }).eq('id', payId);
     return json({ status: 'PENDING', payment_id: payId, amount, instruction: 'approve_on_phone' });
   }
 
