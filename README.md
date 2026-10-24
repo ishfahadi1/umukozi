@@ -19,14 +19,13 @@ Marketplace for domestic workers and employers in Rwanda. A static front end on 
 | Function | Login needed | Purpose |
 |---|---|---|
 | `account` | no (sign-up), yes (phone change) | Creates a sign-up; stores the person's own email and referral code. |
-| `pay` | yes | Starts a payment: Pesapal hosted checkout (or Flutterwave fallback), and checks its status. |
-| `pesapal-ipn` | no (called by Pesapal) | Pesapal's payment notifications. Re-checks the real status with Pesapal before marking a payment paid. |
+| `xentripay` | yes | Starts a XentriPAY checkout for a sign-up, reactivation or boost, and checks its status. The only payment function. |
+| `xentripay-webhook` | no (called by XentriPAY) | XentriPAY notifications. Needs a valid HMAC signature; re-checks the real status before marking a payment paid. |
 | `referral` | yes | Referral summary and payout requests. |
 | `ai-chat` | yes | The in-app AI assistant. Needs `ANTHROPIC_API_KEY`. |
 | `log-error` | yes | Errors the app reports about itself. |
 | `totp` | no (admin login) | Admin setup and login: setup code, PIN, and a 6-digit authenticator code. |
 | `admin` | yes, admin only | Admin actions: delete a user, change a phone number. |
-| `flw-webhook` | no (called by Flutterwave) | Flutterwave notifications, checked with a secret hash. |
 
 ## How admin login works
 
@@ -40,10 +39,8 @@ Safeguards: codes are accepted within 90 seconds either side, a code can be used
 
 Set in Supabase only. Never commit them.
 
-- `MOMO_MODE`: `live` for real payments. Anything else simulates payments.
-- `PESAPAL_CONSUMER_KEY`, `PESAPAL_CONSUMER_SECRET`, `PESAPAL_ENV` (`sandbox` or `live`).
+- `XENTRIPAY_API_KEY`, `XENTRIPAY_ENV` (`live` for real money), `XENTRIPAY_WEBHOOK_SECRET`. See `docs/XENTRIPAY.md`.
 - `APP_URL`: the public address, default `https://umukozi.ishfadi.com`.
-- `FLW_SECRET_KEY`, `FLW_WEBHOOK_HASH`: Flutterwave, used only if Pesapal is not configured.
 - `ANTHROPIC_API_KEY`: the AI assistant.
 
 `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` are provided by Supabase.
@@ -52,7 +49,7 @@ Set in Supabase only. Never commit them.
 
 - Front end: push to GitHub. Netlify publishes the repo root automatically.
 - Database: each file in `supabase/migrations/` is applied in name order.
-- Functions: deploy each folder in `supabase/functions/` with `verify_jwt` as follows: `totp`, `pesapal-ipn` and `flw-webhook` are **off**; the others are **on**.
+- Functions: deploy each folder in `supabase/functions/` with `verify_jwt` as follows: `totp` and `xentripay-webhook` are **off**; the others are **on**.
 
 ## Status rules
 

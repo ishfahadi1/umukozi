@@ -4,7 +4,7 @@
 // - Pages reload once when a new release takes over, so the new version shows at once.
 // - The admin page is never cached.
 // Bump VERSION on every release.
-const VERSION = 'umukozi-2026-10-24-v5';
+const VERSION = 'umukozi-2026-10-24-v6';
 const CACHE = 'umukozi-cache-' + VERSION;
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png',
   '/favicon-32.png', '/assets/logo.png', '/assets/ish-logo.png', '/assets/landing.jpg', '/assets/landing-tab.jpg',
@@ -41,7 +41,7 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  // Supabase, Pesapal, XentriPAY, fonts: straight to the network, never through this worker.
+  // Supabase, XentriPAY, fonts: straight to the network, never through this worker.
   if (url.origin !== self.location.origin) return;
   // The worker file itself is always fetched fresh by the browser.
   if (url.pathname === '/sw.js') return;

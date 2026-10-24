@@ -12,7 +12,8 @@ const APP_URL = Deno.env.get('APP_URL') || 'https://umukozi.ishfadi.com';
 const XP_KEY = Deno.env.get('XENTRIPAY_API_KEY') || '';
 const XP_BASE = Deno.env.get('XENTRIPAY_ENV') === 'live' ? 'https://xentripay.com' : 'https://merchant.test.xentripay.com';
 const MOMO_ON = Deno.env.get('XENTRIPAY_MOMO') === 'on';
-const CHECKOUT_ON = Deno.env.get('XENTRIPAY_CHECKOUT') === 'on';
+// XentriPAY is the only payment provider: the checkout is on whenever the API key is set.
+const CHECKOUT_ON = true;
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -108,7 +109,11 @@ Deno.serve(async (req) => {
     if (p.status === 'PAID') return json({ status: 'PAID', payment_id: p.id });
     if (p.status === 'REJECTED') return json({ status: 'FAILED', payment_id: p.id });
     if (!XP_KEY || !p.provider_ref) return json({ status: 'PENDING', payment_id: p.id });
-    const v = await verdictFor(String(p.provider_ref), Number(p.amount));
+    let v = await verdictFor(String(p.provider_ref), Number(p.amount));
+    if (v === 'PENDING') {
+      const { data: q } = await admin.from('payments').select('provider_refid').eq('id', p.id).maybeSingle();
+      if (q?.provider_refid) v = await verdictFor(String(q.provider_refid), Number(p.amount));
+    }
     await applyVerdict(p.id, v);
     return json({ status: v === 'PAID' ? 'PAID' : v === 'REJECTED' ? 'FAILED' : 'PENDING', payment_id: p.id });
   }
