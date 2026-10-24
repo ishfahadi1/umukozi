@@ -46,3 +46,9 @@
   [headers.values]
     X-Robots-Tag = "noindex, nofollow, noarchive, nosnippet, noimageindex"
     Cache-Control = "no-store"
+
+# The home page revalidates every time, so a new release is seen at once.
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-cache"
