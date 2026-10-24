@@ -52,12 +52,21 @@ export function tokenOk(given, expected) {
 export function refsOf(body) {
   if (!body || typeof body !== 'object') return [];
   const d = body.data && typeof body.data === 'object' ? body.data : {};
-  const raw = [body.refid, body.refId, body.reference, body.customerRef, d.refid, d.reference, d.customerRef, body.transaction && body.transaction.refid];
+  const raw = [body.refid, body.refId, body.reference, body.customerRef, body.sessionId, body.session_id,
+    d.refid, d.reference, d.customerRef, d.sessionId, d.session_id, body.transaction && body.transaction.refid];
   const out = [];
   for (const x of raw) {
     if (typeof x === 'string' && x.trim() && !out.includes(x.trim())) out.push(x.trim());
   }
   return out;
+}
+
+// The provider's collection reference (refid), if a webhook carries one. Used to ask for the status.
+export function statusRefOf(body) {
+  if (!body || typeof body !== 'object') return null;
+  const d = body.data && typeof body.data === 'object' ? body.data : {};
+  const found = [body.refid, body.refId, d.refid, d.refId].find((x) => typeof x === 'string' && x.trim());
+  return found ? found.trim() : null;
 }
 
 // X-Xentripay-Signature is "sha256=" + HMAC-SHA256(secret, raw body bytes), hex.

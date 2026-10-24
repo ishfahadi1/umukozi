@@ -1,25 +1,23 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { decide, refsOf, tokenOk, signatureOk } from './logic.mjs';
+import { decide, refsOf, statusRefOf, signatureOk } from './logic.mjs';
 
-// XentriPAY notifies us here. Three checks, in order:
-//  1. the URL token (set by us in the webhook URL). Missing token config = refuse everything.
-//  2. the HMAC signature on the raw body, when the webhook secret is configured (XentriPAY documents it).
-//  3. the status is re-checked with XentriPAY using our key before anything is marked PAID.
+// XentriPAY notifies us here. The URL is plain (no secret in it). Two checks, in order:
+//  1. the HMAC signature on the raw body, using the webhook secret XentriPAY returns when the webhook is created.
+//     No secret configured = refuse everything.
+//  2. the status is re-checked with XentriPAY using our own key before anything is marked PAID.
 const URL_ = Deno.env.get('SUPABASE_URL')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const XP_KEY = Deno.env.get('XENTRIPAY_API_KEY') || '';
 const XP_BASE = Deno.env.get('XENTRIPAY_ENV') === 'live' ? 'https://xentripay.com' : 'https://merchant.test.xentripay.com';
-const HOOK_TOKEN = Deno.env.get('XENTRIPAY_WEBHOOK_TOKEN') || '';
 const HOOK_SECRET = Deno.env.get('XENTRIPAY_WEBHOOK_SECRET') || '';
 const admin = createClient(URL_, SERVICE, { auth: { persistSession: false, autoRefreshToken: false } });
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('method_not_allowed', { status: 405 });
-  const given = new URL(req.url).searchParams.get('token') || '';
-  if (!tokenOk(given, HOOK_TOKEN)) return new Response('unauthorized', { status: 401 });
+  if (!HOOK_SECRET) return new Response('not_configured', { status: 401 });
 
   const raw = await req.text();
-  if (HOOK_SECRET && !(await signatureOk(raw, HOOK_SECRET, req.headers.get('x-xentripay-signature') || ''))) {
+  if (!(await signatureOk(raw, HOOK_SECRET, req.headers.get('x-xentripay-signature') || ''))) {
     return new Response('bad_signature', { status: 401 });
   }
 
@@ -28,7 +26,7 @@ Deno.serve(async (req) => {
   const refs = refsOf(body);
   if (!refs.length || !XP_KEY) return new Response('ignored', { status: 200 });
 
-  // Our customerRef is stored in provider_ref; XentriPAY's refid is stored in provider_refid.
+  // Our customerRef is stored in provider_ref; XentriPAY's refid or session id is stored in provider_refid.
   let p: any = null;
   const byRef = await admin.from('payments').select('id, status, amount, provider_ref').eq('provider', 'xentripay').in('provider_ref', refs).maybeSingle();
   p = byRef.data;
@@ -39,7 +37,8 @@ Deno.serve(async (req) => {
   if (!p) return new Response('unknown_reference', { status: 200 });
   if (p.status === 'PAID' || p.status === 'REJECTED') return new Response('settled', { status: 200 });
 
-  const r = await fetch(XP_BASE + '/api/collections/status/' + encodeURIComponent(String(p.provider_ref)), {
+  const statusRef = statusRefOf(body) || String(p.provider_ref);
+  const r = await fetch(XP_BASE + '/api/collections/status/' + encodeURIComponent(statusRef), {
     headers: { 'X-XENTRIPAY-KEY': XP_KEY, Accept: 'application/json' },
   });
   const st: any = await r.json().catch(() => null);

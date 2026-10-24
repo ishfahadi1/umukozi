@@ -63,4 +63,9 @@ assert.equal(await L.signatureOk(raw, secret, ''), false, 'missing header refuse
 assert.equal(await L.signatureOk(raw, '', good), false, 'no configured secret refused');
 assert.equal(await L.signatureOk(raw, secret, good.replace('sha256=', '')), false, 'prefix is required');
 
+assert.deepEqual(L.refsOf({ sessionId: 'cs_1' }), ['cs_1']);
+assert.equal(L.statusRefOf({ data: { refid: 'RefA' } }), 'RefA');
+assert.equal(L.statusRefOf({ refid: 'RefB' }), 'RefB');
+assert.equal(L.statusRefOf({ foo: 1 }), null);
+
 console.log('xentripay logic tests: all passed');

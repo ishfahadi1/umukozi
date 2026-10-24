@@ -59,3 +59,13 @@ Status: the code is deployed but switched off. It stays off until XentriPAY give
 1. Does the webhook `data.reference` equal the `refid` from initiate, or some other value? Matching works for both, but this should be confirmed in test.
 2. Is `chargesIncluded: true` the right default for us?
 3. Which webhook events does the dashboard send for a MoMo collection that the customer cancels?
+
+
+## Current design (supersedes the earlier token-in-URL design)
+- **One button, "Kwishyura".** When `XENTRIPAY_CHECKOUT=on`, the app creates a XentriPAY checkout session (`POST /api/checkout/sessions`) and sends the customer to the returned `checkoutUrl`. The customer chooses MoMo or card on XentriPAY's page. The return address is `APP_URL/?xp=<payment id>`.
+- **Pesapal** stays as the fallback while `XENTRIPAY_CHECKOUT` is off.
+- **Webhook URL is plain**: `https://qwashsolakckqgdnuzrs.supabase.co/functions/v1/xentripay-webhook`. No token in the URL, because a secret in the query string was the likely reason for the "unsafe URL" warning. The webhook is authenticated only by the HMAC signature, using `XENTRIPAY_WEBHOOK_SECRET` (returned by XentriPAY when the webhook is created). No secret configured = every request is refused.
+- Secrets: `XENTRIPAY_API_KEY`, `XENTRIPAY_ENV`, `XENTRIPAY_CHECKOUT`, `XENTRIPAY_MOMO` (optional, direct MoMo prompt), `XENTRIPAY_WEBHOOK_SECRET`, optional `APP_URL`. `XENTRIPAY_WEBHOOK_TOKEN` is no longer used.
+
+## Open question that decides whether checkout payments confirm automatically
+Checkout sessions are tracked by a session id (`cs_...`), and the status endpoint needs a refid. Ask XentriPAY: which field do the `CHECKOUT_SUCCESSFUL` webhooks carry (session id, refid, or customerRef), and does the hosted page create the collection with our customerRef? The code matches on all of these. Until the answer is known, test one checkout end to end and read the webhook body.
