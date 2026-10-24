@@ -32,3 +32,16 @@ Status: the code is deployed but switched off. It stays off until XentriPAY give
 3. Test one collection in test mode. Check the status response shape and fix the status mapping if needed.
 4. Set `XENTRIPAY_MOMO=on`, and only then add the MoMo option to the front end.
 5. Only after a live verification, switch `XENTRIPAY_ENV=live`.
+
+## Dashboard steps (merchant 381)
+1. **Webhook** (Settings → Webhooks). URL: `https://qwashsolakckqgdnuzrs.supabase.co/functions/v1/xentripay-webhook?token=<XENTRIPAY_WEBHOOK_TOKEN>`. Select the events `COLLECTION_SUCCESSFUL`, `COLLECTION_FAILED` and `COLLECTION_PENDING`. The form also lists `CHECKOUT_*` and `PAYOUT_*` events, which this integration does not use, so leave them unticked.
+2. **Webhook token**: generate one on Windows with `[guid]::NewGuid().ToString("N") + [guid]::NewGuid().ToString("N")` and store it as `XENTRIPAY_WEBHOOK_TOKEN`. It must match the `token=` value in the URL.
+3. **API key** (Settings → API Keys & Webhooks): create a key and store it as `XENTRIPAY_API_KEY`. Never paste it in chat or commit it.
+4. **IP whitelisting** (Settings → IP Whitelisting): leave it empty until we know the server IPs, or the API calls may be blocked.
+5. **Base URL**: the dashboard shows Environment TEST at xentripay.com, while the spec gives merchant.test.xentripay.com for test. Confirm the correct base in the API documentation file before testing.
+
+## Turning MoMo on, in order
+1. Set `XENTRIPAY_ENV=test`, `XENTRIPAY_API_KEY`, `XENTRIPAY_WEBHOOK_TOKEN`.
+2. Set `XENTRIPAY_MOMO=on`. The MoMo button then appears on the payment screen. Only do this in test first.
+3. Make one test collection and read the status response. Adjust the mapping if its shape differs from what the code expects.
+4. Switch to `live` only after XentriPAY confirms the merchant is approved.
