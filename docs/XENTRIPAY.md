@@ -32,5 +32,7 @@ URL: `https://qwashsolakckqgdnuzrs.supabase.co/functions/v1/xentripay-webhook` (
 ## Tests
 `node tests/xentripay.logic.test.mjs` (no network).
 
+
 ## Checkout page host
 XentriPAY returns a `checkoutUrl`. If it points to a different XentriPAY site than the one that created the session (for example the sandbox API returning a link on `xentripay.com`), the page shows "Failed to load checkout session" and amount 0. `xentripay` now moves such a link to the same host as the API. To force a host, set the optional secret `XENTRIPAY_CHECKOUT_HOST` (for example `https://merchant.test.xentripay.com`). Each checkout is logged as `api=<host> given=<host> using=<host>`.
+

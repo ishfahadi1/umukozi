@@ -4,7 +4,9 @@
 // - Pages reload once when a new release takes over, so the new version shows at once.
 // - The admin page is never cached.
 // Bump VERSION on every release.
+
 const VERSION = 'umukozi-2026-10-26-v8';
+
 const CACHE = 'umukozi-cache-' + VERSION;
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png',
   '/favicon-32.png', '/assets/logo.png', '/assets/ish-logo.png', '/assets/landing.jpg', '/assets/landing-tab.jpg',
