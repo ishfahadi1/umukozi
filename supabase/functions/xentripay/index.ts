@@ -11,8 +11,18 @@ const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const APP_URL = Deno.env.get('APP_URL') || 'https://umukozi.ishfadi.com';
 const XP_KEY = Deno.env.get('XENTRIPAY_API_KEY') || '';
 const XP_BASE = Deno.env.get('XENTRIPAY_ENV') === 'live' ? 'https://xentripay.com' : 'https://merchant.test.xentripay.com';
+// The checkout page must live on the same XentriPAY site that created the session (test or live).
+const XP_CHECKOUT_HOST = Deno.env.get('XENTRIPAY_CHECKOUT_HOST') || '';
+function fixCheckoutUrl(u: string): string {
+  try {
+    const c = new URL(u), base = new URL(XP_CHECKOUT_HOST || XP_BASE);
+    if (c.host !== base.host && c.hostname.endsWith('xentripay.com')) { c.protocol = base.protocol; c.host = base.host; }
+    return c.toString();
+  } catch { return u; }
+}
 const MOMO_ON = Deno.env.get('XENTRIPAY_MOMO') === 'on';
-const CHECKOUT_ON = Deno.env.get('XENTRIPAY_CHECKOUT') === 'on';
+// XentriPAY is the only payment provider: the checkout is on whenever the API key is set.
+const CHECKOUT_ON = true;
 const cors = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -20,6 +30,15 @@ const cors = {
 };
 const json = (b: unknown, s = 200) =>
   new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } });
+// The customer returns to the site they paid from, but only if it is ours.
+function returnBase(b: any): string {
+  try {
+    const o = new URL(String(b?.origin || ''));
+    const ok = o.protocol === 'https:' && (o.origin === new URL(APP_URL).origin || o.hostname.endsWith('.ishfadi.com') || o.hostname === 'ishfadi.com' || o.hostname.endsWith('.netlify.app'));
+    if (ok) return o.origin;
+  } catch { /* fall through */ }
+  return APP_URL;
+}
 const admin = createClient(URL_, SERVICE, { auth: { persistSession: false, autoRefreshToken: false } });
 const d9 = (p: unknown) => String(p ?? '').replace(/\D/g, '').slice(-9);
 
@@ -34,11 +53,11 @@ async function xp(path: string, init: RequestInit = {}): Promise<{ http: number;
 
 // The amount is always decided here on the server, never taken from the client.
 type Price = { error: string; code: number } | { prof: any; amount: number; purpose: 'activation' | 'reactivation' | 'boost'; boostDays: number | null };
-async function priceFor(uid: string, b: any): Promise<Price> {
+async function priceFor(uid: string, b: any, needEmail = false): Promise<Price> {
   const { data: prof } = await admin.from('profiles').select('*').eq('id', uid).maybeSingle();
   if (!prof) return { error: 'no_profile', code: 404 };
   if (prof.suspended) return { error: 'suspended', code: 403 };
-  if (!prof.contact_email) return { error: 'email_required', code: 400 };
+  if (needEmail && !prof.contact_email) return { error: 'email_required', code: 400 };
   const { data: st } = await admin.from('settings').select('fee_worker,fee_employer,boost_prices').eq('id', true).single();
   let amount: number;
   let purpose: 'activation' | 'reactivation' | 'boost';
@@ -108,7 +127,11 @@ Deno.serve(async (req) => {
     if (p.status === 'PAID') return json({ status: 'PAID', payment_id: p.id });
     if (p.status === 'REJECTED') return json({ status: 'FAILED', payment_id: p.id });
     if (!XP_KEY || !p.provider_ref) return json({ status: 'PENDING', payment_id: p.id });
-    const v = await verdictFor(String(p.provider_ref), Number(p.amount));
+    let v = await verdictFor(String(p.provider_ref), Number(p.amount));
+    if (v === 'PENDING') {
+      const { data: q } = await admin.from('payments').select('provider_refid').eq('id', p.id).maybeSingle();
+      if (q?.provider_refid) v = await verdictFor(String(q.provider_refid), Number(p.amount));
+    }
     await applyVerdict(p.id, v);
     return json({ status: v === 'PAID' ? 'PAID' : v === 'REJECTED' ? 'FAILED' : 'PENDING', payment_id: p.id });
   }
@@ -130,20 +153,24 @@ Deno.serve(async (req) => {
 
     const { http, body } = await xp('/api/checkout/sessions', {
       method: 'POST',
-      body: JSON.stringify({ amount: pr.amount, customerFinalUrl: APP_URL + '/?xp=' + payId, currency: 'RWF' }),
+      body: JSON.stringify({ amount: pr.amount, customerFinalUrl: returnBase(b) + '/?xp=' + payId, currency: 'RWF' }),
     });
     if (http >= 300 || !body || typeof body.id !== 'string' || typeof body.checkoutUrl !== 'string') {
       await admin.from('payments').update({ status: 'REJECTED' }).eq('id', payId);
-      return json({ status: 'FAILED', payment_id: payId, error: 'provider_rejected' }, 200);
+      const why = String(body?.message ?? body?.error ?? body?.reply ?? '').slice(0, 200);
+      console.error('xentripay checkout refused', http, why);
+      return json({ status: 'FAILED', payment_id: payId, error: 'provider_rejected', provider_http: http, provider_message: why }, 200);
     }
     await admin.from('payments').update({ provider_refid: String(body.id) }).eq('id', payId);
-    return json({ status: 'REDIRECT', checkoutUrl: body.checkoutUrl, payment_id: payId, amount: pr.amount });
+    const goUrl = fixCheckoutUrl(body.checkoutUrl);
+    try { console.log('xentripay checkout', 'api=' + new URL(XP_BASE).host, 'given=' + new URL(body.checkoutUrl).host, 'using=' + new URL(goUrl).host); } catch { /* ignore */ }
+    return json({ status: 'REDIRECT', checkoutUrl: goUrl, payment_id: payId, amount: pr.amount });
   }
 
   // Direct MoMo prompt on the phone (only when XENTRIPAY_MOMO is on).
   if (b.action === 'initiate') {
     if (!XP_KEY || !MOMO_ON) return json({ error: 'not_configured' }, 503);
-    const pr = await priceFor(uid, b);
+    const pr = await priceFor(uid, b, true);
     if ('error' in pr) return json({ error: pr.error }, pr.code);
     const digits = d9(pr.prof.phone);
     if (!validNineDigits(digits)) return json({ error: 'bad_phone' }, 400);
