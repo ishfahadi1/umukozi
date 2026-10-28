@@ -82,3 +82,27 @@ export async function signatureOk(rawBody, secret, header) {
   if (!secret || !header) return false;
   return tokenOk(String(header).trim(), 'sha256=' + (await hmacHex(secret, rawBody)));
 }
+
+// ---- Checkout link safety -------------------------------------------------------------------------------
+// XentriPAY returns a checkoutUrl. We never rewrite it and never guess one. We only refuse links that cannot be
+// a customer payment page: not https, not a XentriPAY host, or a merchant login / dashboard page.
+const BLOCKED_PATH = /^\/(auth|login|log-in|signin|sign-in|signup|sign-up|register|dashboard|settings|admin)(\/|$)/i;
+
+// Path for logs: anything that looks like an id (session id, uuid, long token) is replaced by :id.
+export function maskedPath(pathname) {
+  return String(pathname || '/').split('/').map((seg) => (
+    /^(cs_)?[0-9a-f-]{16,}$/i.test(seg) || seg.length > 24 ? ':id' : seg
+  )).join('/');
+}
+
+export function inspectCheckoutUrl(raw) {
+  let u;
+  try { u = new URL(String(raw)); } catch { return { ok: false, reason: 'not_a_url', host: '', path: '' }; }
+  const host = u.hostname.toLowerCase();
+  const info = { host, path: maskedPath(u.pathname), hasQuery: u.search.length > 1 };
+  if (u.protocol !== 'https:') return { ok: false, reason: 'not_https', ...info };
+  if (u.username || u.password) return { ok: false, reason: 'credentials_in_url', ...info };
+  if (!(host === 'xentripay.com' || host.endsWith('.xentripay.com'))) return { ok: false, reason: 'foreign_host', ...info };
+  if (BLOCKED_PATH.test(u.pathname)) return { ok: false, reason: 'merchant_login_or_dashboard', ...info };
+  return { ok: true, url: u.toString(), ...info };
+}

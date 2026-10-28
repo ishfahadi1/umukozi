@@ -14,10 +14,12 @@ const admin = createClient(URL_, SERVICE, { auth: { persistSession: false, autoR
 
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('method_not_allowed', { status: 405 });
+  console.log('xentripay-webhook call', 'secret=' + (HOOK_SECRET ? 'set' : 'missing'));
   if (!HOOK_SECRET) return new Response('not_configured', { status: 401 });
 
   const raw = await req.text();
   if (!(await signatureOk(raw, HOOK_SECRET, req.headers.get('x-xentripay-signature') || ''))) {
+    console.error('xentripay-webhook refused: bad signature');
     return new Response('bad_signature', { status: 401 });
   }
 
@@ -34,7 +36,7 @@ Deno.serve(async (req) => {
     const byRefid = await admin.from('payments').select('id, status, amount, provider_ref').eq('provider', 'xentripay').in('provider_refid', refs).maybeSingle();
     p = byRefid.data;
   }
-  if (!p) return new Response('unknown_reference', { status: 200 });
+  if (!p) { console.log('xentripay-webhook: no payment for reference'); return new Response('unknown_reference', { status: 200 }); }
   if (p.status === 'PAID' || p.status === 'REJECTED') return new Response('settled', { status: 200 });
 
   const statusRef = statusRefOf(body) || String(p.provider_ref);
@@ -50,6 +52,7 @@ Deno.serve(async (req) => {
     Number(p.amount),
     st.currency ?? st.data?.currency ?? body.data?.currency ?? null,
   );
+  console.log('xentripay-webhook verdict', verdict);
   if (verdict === 'PAID') {
     await admin.from('payments').update({ status: 'PAID', confirmed_at: new Date().toISOString() })
       .eq('id', p.id).neq('status', 'PAID');

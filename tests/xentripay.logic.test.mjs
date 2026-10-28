@@ -69,3 +69,31 @@ assert.equal(L.statusRefOf({ refid: 'RefB' }), 'RefB');
 assert.equal(L.statusRefOf({ foo: 1 }), null);
 
 console.log('xentripay logic tests: all passed');
+
+// ---- checkout link safety (the link is used as given; only impossible links are refused) ----
+const ok1 = L.inspectCheckoutUrl('https://xentripay.com/checkout/cs_3e58dafa-3fb0-4f25-b093-8efc65342787');
+assert.equal(ok1.ok, true);
+assert.equal(ok1.url, 'https://xentripay.com/checkout/cs_3e58dafa-3fb0-4f25-b093-8efc65342787', 'never rewritten');
+assert.equal(ok1.host, 'xentripay.com', 'host is kept as given, not forced to the API host');
+assert.equal(ok1.path, '/checkout/:id', 'session id is masked for logs');
+assert.equal(L.inspectCheckoutUrl('https://merchant.test.xentripay.com/pay/abc?s=cs_3e58dafa-3fb0-4f25-b093-8efc65342787').ok, true, 'a valid page on another XentriPAY host is not rewritten or refused');
+assert.equal(L.inspectCheckoutUrl('https://merchant.test.xentripay.com/auth/login').reason, 'merchant_login_or_dashboard');
+assert.equal(L.inspectCheckoutUrl('https://xentripay.com/settings/business-profile').reason, 'merchant_login_or_dashboard');
+assert.equal(L.inspectCheckoutUrl('https://xentripay.com/Auth/Login').ok, false, 'case-insensitive');
+assert.equal(L.inspectCheckoutUrl('http://xentripay.com/checkout/x').reason, 'not_https');
+assert.equal(L.inspectCheckoutUrl('https://evil.example/checkout/x').reason, 'foreign_host');
+assert.equal(L.inspectCheckoutUrl('https://xentripay.com.evil.example/checkout/x').reason, 'foreign_host', 'suffix trick');
+assert.equal(L.inspectCheckoutUrl('https://notxentripay.com/checkout/x').reason, 'foreign_host');
+assert.equal(L.inspectCheckoutUrl('https://user:pw@xentripay.com/checkout/x').reason, 'credentials_in_url');
+assert.equal(L.inspectCheckoutUrl('javascript:alert(1)').ok, false);
+assert.equal(L.inspectCheckoutUrl('').reason, 'not_a_url');
+assert.equal(L.inspectCheckoutUrl(undefined).ok, false);
+assert.equal(L.maskedPath('/a/b'), '/a/b');
+assert.equal(L.maskedPath('/checkout/0123456789abcdef0123'), '/checkout/:id');
+{
+  // The server logs only host, path, ok and reason (see xentripay/index.ts). None of them may carry a secret or an id.
+  const r = L.inspectCheckoutUrl('https://xentripay.com/c/cs_3e58dafa-3fb0-4f25-b093-8efc65342787?k=SECRET');
+  const logged = JSON.stringify({ host: r.host, path: r.path, ok: r.ok, reason: r.reason });
+  assert.ok(!logged.includes('SECRET') && !logged.includes('3e58dafa'), 'query string and session id never reach logs');
+}
+console.log('checkout link tests: all passed');
