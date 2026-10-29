@@ -47,7 +47,7 @@ async function snapshot(): Promise<any> {
     sb.from('app_errors').select('message,path,source,created_at').gte('created_at', iso(t48)).limit(5000),
     sb.from('referral_earnings').select('amount,level,created_at').gte('created_at', iso(t7d)).limit(10000),
     sb.from('payout_requests').select('status,amount,created_at').gte('created_at', iso(t7d)).limit(5000),
-    sb.from('settings').select('fee_worker,fee_employer,boost_prices,ref_l1,ref_l2,min_payout,pesapal_ipn_env').eq('id', true).maybeSingle(),
+    sb.from('settings').select('fee_worker,fee_employer,boost_prices,ref_l1,ref_l2,min_payout').eq('id', true).maybeSingle(),
     sb.from('categories').select('name,fee').order('name'),
   ]);
 
@@ -124,7 +124,7 @@ async function snapshot(): Promise<any> {
     money: money_block,
     errors: errors_block,
     last_7_days: days,
-    settings_now: { fee_employer: settings?.fee_employer, fee_worker: settings?.fee_worker, boost_prices: settings?.boost_prices, ref_l1: settings?.ref_l1, ref_l2: settings?.ref_l2, min_payout: settings?.min_payout, pesapal_mode: settings?.pesapal_ipn_env },
+    settings_now: { fee_employer: settings?.fee_employer, fee_worker: settings?.fee_worker, boost_prices: settings?.boost_prices, ref_l1: settings?.ref_l1, ref_l2: settings?.ref_l2, min_payout: settings?.min_payout },
     category_fees: (cats || []).map((c: any) => ({ name: c.name, fee: c.fee })),
   };
 }

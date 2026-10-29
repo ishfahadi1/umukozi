@@ -1,25 +1,17 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { decide, cnumber, msisdn, validNineDigits, boostAmount, isAccepted } from './logic.mjs';
+import { decide, cnumber, msisdn, validNineDigits, boostAmount, isAccepted, inspectCheckoutUrl } from './logic.mjs';
 
 // XentriPAY, used for mobile money (MTN, Airtel) and cards, on XentriPAY's own checkout page.
 // Only active when XENTRIPAY_API_KEY is set. "options" tells the app what is switched on:
-//   XENTRIPAY_CHECKOUT=on  -> one "Kwishyura" button; the customer picks MoMo or card on XentriPAY's page.
-//   XENTRIPAY_MOMO=on      -> a direct MoMo prompt on the customer's phone (no card).
+//   One "Kwishyura" button: the customer picks MoMo or card on XentriPAY's page. Always on when the key is set.
+//   XENTRIPAY_MOMO=on      -> a direct MoMo prompt on the customer's phone (no card). Not used by the app.
 // Keys live only in Supabase secrets.
 const URL_ = Deno.env.get('SUPABASE_URL')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const APP_URL = Deno.env.get('APP_URL') || 'https://umukozi.ishfadi.com';
 const XP_KEY = Deno.env.get('XENTRIPAY_API_KEY') || '';
 const XP_BASE = Deno.env.get('XENTRIPAY_ENV') === 'live' ? 'https://xentripay.com' : 'https://merchant.test.xentripay.com';
-// The checkout page must live on the same XentriPAY site that created the session (test or live).
-const XP_CHECKOUT_HOST = Deno.env.get('XENTRIPAY_CHECKOUT_HOST') || '';
-function fixCheckoutUrl(u: string): string {
-  try {
-    const c = new URL(u), base = new URL(XP_CHECKOUT_HOST || XP_BASE);
-    if (c.host !== base.host && c.hostname.endsWith('xentripay.com')) { c.protocol = base.protocol; c.host = base.host; }
-    return c.toString();
-  } catch { return u; }
-}
+const XP_ENV = Deno.env.get('XENTRIPAY_ENV') === 'live' ? 'live' : 'test';
 const MOMO_ON = Deno.env.get('XENTRIPAY_MOMO') === 'on';
 // XentriPAY is the only payment provider: the checkout is on whenever the API key is set.
 const CHECKOUT_ON = true;
@@ -117,6 +109,9 @@ Deno.serve(async (req) => {
   let b: any;
   try { b = await req.json(); } catch { return json({ error: 'bad_json' }, 400); }
 
+  // One safe line per call, so an empty log means the function was not reached. No key, no user data.
+  console.log('xentripay call', 'action=' + String(b?.action ?? ''), 'env=' + XP_ENV, 'api=' + new URL(XP_BASE).host, 'key=' + (XP_KEY ? 'set' : 'missing'));
+
   // What the app may show. Tells nothing secret.
   if (b.action === 'options') return json({ configured: !!XP_KEY, checkout: CHECKOUT_ON && !!XP_KEY, momo: MOMO_ON && !!XP_KEY });
 
@@ -144,6 +139,12 @@ Deno.serve(async (req) => {
     const digits = d9(pr.prof.phone);
     if (!validNineDigits(digits)) return json({ error: 'bad_phone' }, 400);
 
+    // A second request within a few seconds (double tap, retry) must not open a second checkout.
+    const since = new Date(Date.now() - 15000).toISOString();
+    const { data: recent } = await admin.from('payments').select('id').eq('profile_id', uid).eq('provider', 'xentripay')
+      .eq('status', 'PENDING').gte('created_at', since).limit(1);
+    if (recent && recent.length) return json({ error: 'duplicate_request' }, 429);
+
     const payId = crypto.randomUUID();
     const { error: pe } = await admin.from('payments').insert({
       id: payId, profile_id: uid, provider: 'xentripay', phone: '0' + digits, amount: pr.amount, purpose: pr.purpose,
@@ -155,16 +156,24 @@ Deno.serve(async (req) => {
       method: 'POST',
       body: JSON.stringify({ amount: pr.amount, customerFinalUrl: returnBase(b) + '/?xp=' + payId, currency: 'RWF' }),
     });
-    if (http >= 300 || !body || typeof body.id !== 'string' || typeof body.checkoutUrl !== 'string') {
+    const created = http < 300 && !!body && typeof body.id === 'string' && typeof body.checkoutUrl === 'string';
+    console.log('xentripay session', 'api=' + new URL(XP_BASE).host, 'http=' + http, 'created=' + created);
+    if (!created) {
       await admin.from('payments').update({ status: 'REJECTED' }).eq('id', payId);
       const why = String(body?.message ?? body?.error ?? body?.reply ?? '').slice(0, 200);
-      console.error('xentripay checkout refused', http, why);
+      console.error('xentripay session refused', 'http=' + http, 'why=' + why);
       return json({ status: 'FAILED', payment_id: payId, error: 'provider_rejected', provider_http: http, provider_message: why }, 200);
     }
     await admin.from('payments').update({ provider_refid: String(body.id) }).eq('id', payId);
-    const goUrl = fixCheckoutUrl(body.checkoutUrl);
-    try { console.log('xentripay checkout', 'api=' + new URL(XP_BASE).host, 'given=' + new URL(body.checkoutUrl).host, 'using=' + new URL(goUrl).host); } catch { /* ignore */ }
-    return json({ status: 'REDIRECT', checkoutUrl: goUrl, payment_id: payId, amount: pr.amount });
+
+    // The link is used exactly as XentriPAY gave it. It is only refused if it cannot be a payment page.
+    const link = inspectCheckoutUrl(body.checkoutUrl);
+    console.log('xentripay checkout link', 'host=' + link.host, 'path=' + link.path, 'ok=' + link.ok, link.ok ? '' : 'reason=' + link.reason);
+    if (!link.ok) {
+      await admin.from('payments').update({ status: 'REJECTED' }).eq('id', payId);
+      return json({ status: 'FAILED', payment_id: payId, error: 'invalid_checkout_url', reason: link.reason, link_host: link.host, link_path: link.path }, 200);
+    }
+    return json({ status: 'REDIRECT', checkoutUrl: link.url, payment_id: payId, amount: pr.amount });
   }
 
   // Direct MoMo prompt on the phone (only when XENTRIPAY_MOMO is on).
