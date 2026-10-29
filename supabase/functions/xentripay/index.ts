@@ -1,10 +1,10 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { decide, cnumber, msisdn, validNineDigits, boostAmount, isAccepted, inspectCheckoutUrl } from './logic.mjs';
+import { decide, cnumber, msisdn, validNineDigits, boostAmount, isAccepted, inspectCheckoutUrl, inspectPayUrl } from './logic.mjs';
 
 // XentriPAY, used for mobile money (MTN, Airtel) and cards, on XentriPAY's own checkout page.
 // Only active when XENTRIPAY_API_KEY is set. "options" tells the app what is switched on:
 //   One "Kwishyura" button: the customer picks MoMo or card on XentriPAY's page. Always on when the key is set.
-//   XENTRIPAY_MOMO=on      -> a direct MoMo prompt on the customer's phone (no card). Not used by the app.
+//   action "initiate": MoMo prompt (MTN, Airtel) or card, in the app's own screen. Used by the app.
 // Keys live only in Supabase secrets.
 const URL_ = Deno.env.get('SUPABASE_URL')!;
 const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -12,7 +12,6 @@ const APP_URL = Deno.env.get('APP_URL') || 'https://umukozi.ishfadi.com';
 const XP_KEY = Deno.env.get('XENTRIPAY_API_KEY') || '';
 const XP_BASE = Deno.env.get('XENTRIPAY_ENV') === 'live' ? 'https://xentripay.com' : 'https://merchant.test.xentripay.com';
 const XP_ENV = Deno.env.get('XENTRIPAY_ENV') === 'live' ? 'live' : 'test';
-const MOMO_ON = Deno.env.get('XENTRIPAY_MOMO') === 'on';
 // XentriPAY is the only payment provider: the checkout is on whenever the API key is set.
 const CHECKOUT_ON = true;
 const cors = {
@@ -113,7 +112,7 @@ Deno.serve(async (req) => {
   console.log('xentripay call', 'action=' + String(b?.action ?? ''), 'env=' + XP_ENV, 'api=' + new URL(XP_BASE).host, 'key=' + (XP_KEY ? 'set' : 'missing'));
 
   // What the app may show. Tells nothing secret.
-  if (b.action === 'options') return json({ configured: !!XP_KEY, checkout: CHECKOUT_ON && !!XP_KEY, momo: MOMO_ON && !!XP_KEY });
+  if (b.action === 'options') return json({ configured: !!XP_KEY, checkout: CHECKOUT_ON && !!XP_KEY, momo: !!XP_KEY, card: !!XP_KEY });
 
   if (b.action === 'status') {
     const { data: p } = await admin.from('payments').select('id, profile_id, status, provider, provider_ref, amount')
@@ -176,43 +175,59 @@ Deno.serve(async (req) => {
     return json({ status: 'REDIRECT', checkoutUrl: link.url, payment_id: payId, amount: pr.amount });
   }
 
-  // Direct MoMo prompt on the phone (only when XENTRIPAY_MOMO is on).
+  // Direct payment in our own screen: MoMo prompt on the phone (MTN, Airtel) or card (redirect).
+  // The fee comes out of the amount (chargesIncluded), so the customer pays exactly the price shown in the app.
   if (b.action === 'initiate') {
-    if (!XP_KEY || !MOMO_ON) return json({ error: 'not_configured' }, 503);
-    const pr = await priceFor(uid, b, true);
+    if (!XP_KEY) return json({ error: 'not_configured' }, 503);
+    const method = b.method === 'cc' ? 'cc' : 'momo';
+    const pr = await priceFor(uid, b);
     if ('error' in pr) return json({ error: pr.error }, pr.code);
-    const digits = d9(pr.prof.phone);
-    if (!validNineDigits(digits)) return json({ error: 'bad_phone' }, 400);
+    const digits = method === 'momo' ? d9(b.phone || pr.prof.phone) : d9(pr.prof.phone);
+    if (method === 'momo' && !validNineDigits(digits)) return json({ error: 'bad_phone' }, 400);
+
+    const since = new Date(Date.now() - 15000).toISOString();
+    const { data: recent } = await admin.from('payments').select('id').eq('profile_id', uid).eq('provider', 'xentripay')
+      .eq('status', 'PENDING').gte('created_at', since).limit(1);
+    if (recent && recent.length) return json({ error: 'duplicate_request' }, 429);
 
     // Our reference (customerRef) is saved before we call the provider, so every attempt is traceable.
     const payId = crypto.randomUUID();
     const { error: pe } = await admin.from('payments').insert({
-      id: payId, profile_id: uid, provider: 'xentripay', phone: '0' + digits, amount: pr.amount, purpose: pr.purpose,
+      id: payId, profile_id: uid, provider: 'xentripay', phone: digits ? '0' + digits : null, amount: pr.amount, purpose: pr.purpose,
       boost_days: pr.boostDays, status: 'PENDING', provider_ref: payId,
     });
     if (pe) return json({ error: 'payment_failed' }, 500);
 
-    const { http, body } = await xp('/api/collections/initiate', {
-      method: 'POST',
-      body: JSON.stringify({
-        email: pr.prof.contact_email,
-        cname: String(pr.prof.name || 'Umukozi user').trim(),
-        amount: pr.amount,
-        cnumber: cnumber(digits),
-        msisdn: msisdn(digits),
-        currency: 'RWF',
-        pmethod: 'momo',
-        customerRef: payId,
-        // The fee comes out of the amount, so the customer pays exactly the price shown in the app.
-        chargesIncluded: true,
-        details: pr.purpose === 'boost' ? 'UMUKOZI boost' : 'UMUKOZI kwemeza konti',
-      }),
-    });
+    const back = returnBase(b) + '/?xp=' + payId;
+    const payload: Record<string, unknown> = {
+      email: pr.prof.contact_email || (uid + '@umukozi.ishfadi.com'),
+      cname: String(pr.prof.name || 'Umukozi user').trim(),
+      amount: pr.amount,
+      currency: 'RWF',
+      pmethod: method,
+      customerRef: payId,
+      chargesIncluded: true,
+      details: pr.purpose === 'boost' ? 'UMUKOZI boost' : 'UMUKOZI kwemeza konti',
+    };
+    if (method === 'momo') { payload.cnumber = cnumber(digits); payload.msisdn = msisdn(digits); }
+    else { payload.redirecturl = back; payload.returl = back; if (digits) { payload.cnumber = cnumber(digits); payload.msisdn = msisdn(digits); } }
+
+    const { http, body } = await xp('/api/collections/initiate', { method: 'POST', body: JSON.stringify(payload) });
+    console.log('xentripay initiate', 'method=' + method, 'api=' + new URL(XP_BASE).host, 'http=' + http, 'retcode=' + String(body?.retcode ?? ''));
     if (!isAccepted(body, http)) {
       await admin.from('payments').update({ status: 'REJECTED' }).eq('id', payId);
-      return json({ status: 'FAILED', payment_id: payId, error: 'provider_rejected', retcode: body?.retcode ?? null, reply: body?.reply ?? null }, 200);
+      return json({ status: 'FAILED', payment_id: payId, error: 'provider_rejected', retcode: body?.retcode ?? null, provider_http: http }, 200);
     }
     await admin.from('payments').update({ provider_refid: String(body.refid) }).eq('id', payId);
+    if (method === 'cc') {
+      const link = inspectPayUrl(body.url);
+      console.log('xentripay card link', 'host=' + link.host, 'path=' + link.path, 'ok=' + link.ok, link.ok ? '' : 'reason=' + link.reason);
+      if (!link.ok) {
+        await admin.from('payments').update({ status: 'REJECTED' }).eq('id', payId);
+        return json({ status: 'FAILED', payment_id: payId, error: 'invalid_card_url', reason: link.reason }, 200);
+      }
+      return json({ status: 'REDIRECT', url: link.url, payment_id: payId, amount: pr.amount });
+    }
     return json({ status: 'PENDING', payment_id: payId, amount: pr.amount, instruction: 'approve_on_phone' });
   }
 

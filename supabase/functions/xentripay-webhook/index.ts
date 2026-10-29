@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
 
   const verdict = decide(
     st.status ?? st.data?.status,
-    st.amount ?? st.data?.amount ?? body.data?.amount ?? null,
+    st.amount ?? st.data?.amount ?? null,
     Number(p.amount),
     st.currency ?? st.data?.currency ?? body.data?.currency ?? null,
   );

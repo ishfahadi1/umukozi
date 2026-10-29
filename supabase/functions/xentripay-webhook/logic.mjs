@@ -106,3 +106,15 @@ export function inspectCheckoutUrl(raw) {
   if (BLOCKED_PATH.test(u.pathname)) return { ok: false, reason: 'merchant_login_or_dashboard', ...info };
   return { ok: true, url: u.toString(), ...info };
 }
+
+// Card payments: XentriPAY returns a url (its own page, or the card processor's 3-D Secure page). Same rules as the
+// checkout link, plus the card processor's host. Never rewritten, never guessed.
+export function inspectPayUrl(raw) {
+  const r = inspectCheckoutUrl(raw);
+  if (r.ok) return r;
+  if (r.reason !== 'foreign_host') return r;
+  let u; try { u = new URL(String(raw)); } catch { return r; }
+  const h = u.hostname.toLowerCase();
+  if (h === 'urubutopay.rw' || h.endsWith('.urubutopay.rw')) return { ok: true, url: u.toString(), host: h, path: maskedPath(u.pathname), hasQuery: u.search.length > 1 };
+  return r;
+}
