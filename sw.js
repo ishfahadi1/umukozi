@@ -5,7 +5,7 @@
 // - The admin page is never cached.
 // Bump VERSION on every release.
 
-const VERSION = 'umukozi-2026-10-29-v10';
+const VERSION = 'umukozi-2026-10-30-v11';
 
 const CACHE = 'umukozi-cache-' + VERSION;
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png', '/apple-touch-icon.png',
